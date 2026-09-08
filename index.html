@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -363,6 +362,18 @@
     cursor:pointer;
     margin-top:8px;
   }
+  .reserva-ok, .reserva-warn{
+    margin-top:8px;
+    padding:10px;
+    border-radius:8px;
+    font-size:12px;
+  }
+  .reserva-ok{ background:#E4EEE1; color:var(--green); }
+  .reserva-warn{ background:#F6E4E2; color:var(--red); }
+  .reserva-item{
+    margin-bottom:4px;
+  }
+  .reserva-item:last-child{ margin-bottom:0; }
   .lock-overlay{
     position:fixed;
     inset:0;
@@ -514,6 +525,8 @@
           <option>Tenis</option>
           <option>Club House</option>
         </select>
+        <button class="btn-secondary" id="btn-verificar-reserva" type="button" style="margin-top:8px;">Verificar reserva de hoy</button>
+        <div id="resultado-reserva"></div>
       </div>
 
       <div class="row2">
@@ -1042,6 +1055,100 @@ async function procesarCodigoDNI(raw){
     toast("Se leyó el código pero no se pudo interpretar. Cargá los datos a mano.");
   }
 }
+
+const RESERVAS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQGYXQ1_FPf4eHa3jfwWS5gBk10yg0YotW5JIpual3VyUGxnGzmANL4xzi30up6F1xi24i8H3fBJu2Y/pub?gid=1415115184&single=true&output=csv";
+
+function parseCSV(text){
+  const rows = [];
+  let row = [], val = "", inQuotes = false;
+  for(let i = 0; i < text.length; i++){
+    const c = text[i], next = text[i+1];
+    if(inQuotes){
+      if(c === '"' && next === '"'){ val += '"'; i++; }
+      else if(c === '"'){ inQuotes = false; }
+      else{ val += c; }
+    }else{
+      if(c === '"'){ inQuotes = true; }
+      else if(c === ','){ row.push(val); val = ""; }
+      else if(c === '\r'){ /* skip */ }
+      else if(c === '\n'){ row.push(val); rows.push(row); row = []; val = ""; }
+      else{ val += c; }
+    }
+  }
+  if(val.length || row.length){ row.push(val); rows.push(row); }
+  return rows.filter(r => r.some(c => c.trim() !== ""));
+}
+
+function hoyFormatoPlanilla(){
+  const d = new Date();
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth()+1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+async function verificarReserva(){
+  const cont = document.getElementById("resultado-reserva");
+  cont.innerHTML = '<div class="reserva-warn">Consultando planilla de reservas...</div>';
+
+  const lote = document.getElementById("f-lote").value.trim();
+  const nombre = document.getElementById("f-nombre").value.trim();
+  const apellido = document.getElementById("f-apellido").value.trim();
+
+  if(!lote && !nombre && !apellido){
+    cont.innerHTML = '<div class="reserva-warn">Completá al menos el lote o el nombre antes de verificar.</div>';
+    return;
+  }
+
+  try{
+    const res = await fetch(RESERVAS_CSV_URL, { cache: "no-store" });
+    if(!res.ok) throw new Error("HTTP " + res.status);
+    const text = await res.text();
+    const rows = parseCSV(text);
+    if(rows.length < 2){
+      cont.innerHTML = '<div class="reserva-warn">La planilla de reservas está vacía o no se pudo leer.</div>';
+      return;
+    }
+    const headers = rows[0].map(h => h.trim().toUpperCase());
+    const idxLote = headers.findIndex(h => h.includes("LOTE"));
+    const idxNombre = headers.findIndex(h => h.includes("NOMBRE"));
+    const idxCancha = headers.findIndex(h => h.includes("CANCHA"));
+    const idxFecha = headers.findIndex(h => h.includes("FECHA"));
+    const idxHorario = headers.findIndex(h => h.includes("HORARIO"));
+    const idxEstado = headers.findIndex(h => h.includes("ESTADO"));
+
+    const hoy = hoyFormatoPlanilla();
+    const nombreCompleto = (nombre + " " + apellido).trim().toLowerCase();
+
+    const coincidencias = rows.slice(1).filter(r => {
+      const fechaOk = idxFecha >= 0 ? (r[idxFecha] || "").trim() === hoy : true;
+      if(!fechaOk) return false;
+      if(lote && idxLote >= 0){
+        return (r[idxLote] || "").trim() === lote;
+      }
+      if(idxNombre >= 0){
+        return (r[idxNombre] || "").toLowerCase().includes(nombreCompleto) && nombreCompleto.length > 2;
+      }
+      return false;
+    });
+
+    if(coincidencias.length === 0){
+      cont.innerHTML = '<div class="reserva-warn">No se encontró ninguna reserva de hoy para estos datos. Verificá igual con el visitante antes de autorizar.</div>';
+    }else{
+      const items = coincidencias.map(r => {
+        const cancha = idxCancha >= 0 ? r[idxCancha] : "-";
+        const horario = idxHorario >= 0 ? r[idxHorario] : "-";
+        const estado = idxEstado >= 0 ? r[idxEstado] : "-";
+        return `<div class="reserva-item">• ${escapeHtml(cancha)} — ${escapeHtml(horario)} (${escapeHtml(estado)})</div>`;
+      }).join("");
+      cont.innerHTML = `<div class="reserva-ok">Reservas encontradas para hoy:${items}</div>`;
+    }
+  }catch(e){
+    cont.innerHTML = '<div class="reserva-warn">No se pudo consultar la planilla (revisá la conexión a internet).</div>';
+  }
+}
+
+document.getElementById("btn-verificar-reserva").addEventListener("click", verificarReserva);
 
 document.getElementById("btn-escanear").addEventListener("click", ()=>{
   if(grupoModo && !document.getElementById("f-autoriza").value.trim()){
