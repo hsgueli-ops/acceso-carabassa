@@ -1056,28 +1056,7 @@ async function procesarCodigoDNI(raw){
   }
 }
 
-const RESERVAS_CSV_URL = "https://docs.google.com/spreadsheets/d/1mWr20Aw4D8m1OzzYg26BGFHEZqrB9w9tKQSyzMjPdj4/gviz/tq?tqx=out:csv&gid=1415115184";
-
-function parseCSV(text){
-  const rows = [];
-  let row = [], val = "", inQuotes = false;
-  for(let i = 0; i < text.length; i++){
-    const c = text[i], next = text[i+1];
-    if(inQuotes){
-      if(c === '"' && next === '"'){ val += '"'; i++; }
-      else if(c === '"'){ inQuotes = false; }
-      else{ val += c; }
-    }else{
-      if(c === '"'){ inQuotes = true; }
-      else if(c === ','){ row.push(val); val = ""; }
-      else if(c === '\r'){ /* skip */ }
-      else if(c === '\n'){ row.push(val); rows.push(row); row = []; val = ""; }
-      else{ val += c; }
-    }
-  }
-  if(val.length || row.length){ row.push(val); rows.push(row); }
-  return rows.filter(r => r.some(c => c.trim() !== ""));
-}
+const RESERVAS_JSON_URL = "https://script.google.com/macros/s/AKfycbws3YU56wlYmKrsgmOGOev4tTst2YyOKmzJfbeeCvFO8Rvbh_9iprLjbmzZspeumPPKzg/exec";
 
 function hoyFormatoPlanilla(){
   const d = new Date();
@@ -1085,6 +1064,26 @@ function hoyFormatoPlanilla(){
   const mm = String(d.getMonth()+1).padStart(2, "0");
   const yyyy = d.getFullYear();
   return `${dd}/${mm}/${yyyy}`;
+}
+
+function buscarClave(obj, palabra){
+  const key = Object.keys(obj).find(k => k.toUpperCase().includes(palabra));
+  return key || null;
+}
+
+function formatearFechaCelda(valor){
+  if(!valor) return "";
+  if(valor instanceof Object && valor.toString){
+    // Apps Script serializa fechas como string ISO; normalizamos a dd/mm/yyyy
+    const posible = new Date(valor);
+    if(!isNaN(posible)){
+      const dd = String(posible.getDate()).padStart(2, "0");
+      const mm = String(posible.getMonth()+1).padStart(2, "0");
+      const yyyy = posible.getFullYear();
+      return `${dd}/${mm}/${yyyy}`;
+    }
+  }
+  return String(valor).trim();
 }
 
 async function verificarReserva(){
@@ -1101,33 +1100,33 @@ async function verificarReserva(){
   }
 
   try{
-    const res = await fetch(RESERVAS_CSV_URL, { cache: "no-store" });
+    const res = await fetch(RESERVAS_JSON_URL, { cache: "no-store" });
     if(!res.ok) throw new Error("HTTP " + res.status);
-    const text = await res.text();
-    const rows = parseCSV(text);
-    if(rows.length < 2){
+    const filas = await res.json();
+    if(!Array.isArray(filas) || filas.length === 0){
       cont.innerHTML = '<div class="reserva-warn">La planilla de reservas está vacía o no se pudo leer.</div>';
       return;
     }
-    const headers = rows[0].map(h => h.trim().toUpperCase());
-    const idxLote = headers.findIndex(h => h.includes("LOTE"));
-    const idxNombre = headers.findIndex(h => h.includes("NOMBRE"));
-    const idxCancha = headers.findIndex(h => h.includes("CANCHA"));
-    const idxFecha = headers.findIndex(h => h.includes("FECHA"));
-    const idxHorario = headers.findIndex(h => h.includes("HORARIO"));
-    const idxEstado = headers.findIndex(h => h.includes("ESTADO"));
+
+    const muestra = filas[0];
+    const keyLote = buscarClave(muestra, "LOTE");
+    const keyNombre = buscarClave(muestra, "NOMBRE");
+    const keyCancha = buscarClave(muestra, "CANCHA");
+    const keyFecha = buscarClave(muestra, "FECHA");
+    const keyHorario = buscarClave(muestra, "HORARIO");
+    const keyEstado = buscarClave(muestra, "ESTADO");
 
     const hoy = hoyFormatoPlanilla();
     const nombreCompleto = (nombre + " " + apellido).trim().toLowerCase();
 
-    const coincidencias = rows.slice(1).filter(r => {
-      const fechaOk = idxFecha >= 0 ? (r[idxFecha] || "").trim() === hoy : true;
-      if(!fechaOk) return false;
-      if(lote && idxLote >= 0){
-        return (r[idxLote] || "").trim() === lote;
+    const coincidencias = filas.filter(f => {
+      const fechaFila = keyFecha ? formatearFechaCelda(f[keyFecha]) : "";
+      if(fechaFila !== hoy) return false;
+      if(lote && keyLote){
+        return String(f[keyLote] || "").trim() === lote;
       }
-      if(idxNombre >= 0){
-        return (r[idxNombre] || "").toLowerCase().includes(nombreCompleto) && nombreCompleto.length > 2;
+      if(keyNombre){
+        return String(f[keyNombre] || "").toLowerCase().includes(nombreCompleto) && nombreCompleto.length > 2;
       }
       return false;
     });
@@ -1135,10 +1134,10 @@ async function verificarReserva(){
     if(coincidencias.length === 0){
       cont.innerHTML = '<div class="reserva-warn">No se encontró ninguna reserva de hoy para estos datos. Verificá igual con el visitante antes de autorizar.</div>';
     }else{
-      const items = coincidencias.map(r => {
-        const cancha = idxCancha >= 0 ? r[idxCancha] : "-";
-        const horario = idxHorario >= 0 ? r[idxHorario] : "-";
-        const estado = idxEstado >= 0 ? r[idxEstado] : "-";
+      const items = coincidencias.map(f => {
+        const cancha = keyCancha ? f[keyCancha] : "-";
+        const horario = keyHorario ? f[keyHorario] : "-";
+        const estado = keyEstado ? f[keyEstado] : "-";
         return `<div class="reserva-item">• ${escapeHtml(cancha)} — ${escapeHtml(horario)} (${escapeHtml(estado)})</div>`;
       }).join("");
       cont.innerHTML = `<div class="reserva-ok">Reservas encontradas para hoy:${items}</div>`;
