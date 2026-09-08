@@ -1144,7 +1144,7 @@ async function verificarReserva(){
       cont.innerHTML = `<div class="reserva-ok">Reservas encontradas para hoy:${items}</div>`;
     }
   }catch(e){
-    cont.innerHTML = '<div class="reserva-warn">No se pudo consultar la planilla (revisá la conexión a internet).</div>';
+    cont.innerHTML = '<div class="reserva-warn">No se pudo consultar la planilla. Detalle: ' + escapeHtml(e.message || String(e)) + '</div>';
   }
 }
 
