@@ -1073,17 +1073,23 @@ function buscarClave(obj, palabra){
 
 function formatearFechaCelda(valor){
   if(!valor) return "";
-  if(valor instanceof Object && valor.toString){
-    // Apps Script serializa fechas como string ISO; normalizamos a dd/mm/yyyy
-    const posible = new Date(valor);
-    if(!isNaN(posible)){
-      const dd = String(posible.getDate()).padStart(2, "0");
-      const mm = String(posible.getMonth()+1).padStart(2, "0");
-      const yyyy = posible.getFullYear();
+  const texto = String(valor).trim();
+  if(/^\d{4}-\d{2}-\d{2}/.test(texto)){
+    const asDate = new Date(texto);
+    if(!isNaN(asDate)){
+      const dd = String(asDate.getDate()).padStart(2, "0");
+      const mm = String(asDate.getMonth()+1).padStart(2, "0");
+      const yyyy = asDate.getFullYear();
       return `${dd}/${mm}/${yyyy}`;
     }
   }
-  return String(valor).trim();
+  return texto;
+}
+
+function normalizarLote(valor){
+  const texto = String(valor || "").trim();
+  if(/^\d+$/.test(texto)){ return String(parseInt(texto, 10)); }
+  return texto.toLowerCase();
 }
 
 async function verificarReserva(){
@@ -1123,7 +1129,7 @@ async function verificarReserva(){
       const fechaFila = keyFecha ? formatearFechaCelda(f[keyFecha]) : "";
       if(fechaFila !== hoy) return false;
       if(lote && keyLote){
-        return String(f[keyLote] || "").trim() === lote;
+        return normalizarLote(f[keyLote]) === normalizarLote(lote);
       }
       if(keyNombre){
         return String(f[keyNombre] || "").toLowerCase().includes(nombreCompleto) && nombreCompleto.length > 2;
